@@ -1,0 +1,9 @@
+# Скопируйте этот файл в .env и заполните ваши API ключи
+
+# OpenAI API Key для умного анализа цитат
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Threads API для публикации (опционально)
+THREADS_ACCESS_TOKEN=your_threads_access_token_here
+IG_USER_ID=your_instagram_user_id_here
+

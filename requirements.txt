@@ -1,0 +1,9 @@
+streamlit
+requests
+pandas
+beautifulsoup4
+PyMuPDF
+openai
+python-dotenv
+tqdm
+typing_extensions
