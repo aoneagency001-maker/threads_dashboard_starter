@@ -78,12 +78,8 @@ class LLMClient:
     def get_model_name(self, model_type: str = "default") -> str:
         """Возвращает название модели в зависимости от провайдера"""
         if self.active_provider == LLMProvider.CLAUDE:
-            if model_type == "fast":
-                return "claude-3-haiku-20240307"  # Быстрая и дешёвая
-            elif model_type == "smart":
-                return "claude-3-5-sonnet-20241022"  # Умная (по умолчанию)
-            else:
-                return "claude-3-5-sonnet-20241022"
+            # Используем Haiku - быстрая, дешёвая и доступная на всех аккаунтах
+            return "claude-3-haiku-20240307"
 
         elif self.active_provider == LLMProvider.OPENAI:
             if model_type == "fast":
