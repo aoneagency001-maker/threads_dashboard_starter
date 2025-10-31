@@ -34,6 +34,12 @@ data/books/*.fb2
 # Keep JSON files with quotes, but ignore large data
 data/posts.json
 
+# Database files (local only)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Logs
 *.log
 
