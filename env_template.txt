@@ -1,9 +1,24 @@
 # Скопируйте этот файл в .env и заполните ваши API ключи
 
-# OpenAI API Key для умного анализа цитат
+# ============================================
+# LLM API Keys (выберите один или оба)
+# ============================================
+
+# Anthropic Claude API (РЕКОМЕНДУЕТСЯ) - лучшее качество анализа текста
+# Получить: https://console.anthropic.com/
+# Стоимость: $5-12 за книгу с Claude 3.5 Sonnet
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+
+# OpenAI API (альтернатива) - можно использовать как fallback
+# Получить: https://platform.openai.com/
+# Стоимость: $0.50-2 за книгу с GPT-4o-mini, $5-15 с GPT-4o
 OPENAI_API_KEY=your_openai_api_key_here
 
+# ПРИОРИТЕТ: Если указаны оба ключа, система использует Claude (лучше для текста)
+
+# ============================================
 # Threads API для публикации (опционально)
+# ============================================
 THREADS_ACCESS_TOKEN=your_threads_access_token_here
 IG_USER_ID=your_instagram_user_id_here
 

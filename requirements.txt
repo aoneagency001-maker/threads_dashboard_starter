@@ -4,6 +4,7 @@ pandas
 beautifulsoup4
 PyMuPDF
 openai
+anthropic
 python-dotenv
 tqdm
 typing_extensions
