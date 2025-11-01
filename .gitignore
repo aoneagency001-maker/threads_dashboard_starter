@@ -13,6 +13,9 @@ ENV/
 .env
 .env.local
 
+# Secrets documentation (contains real API keys)
+SECRETS.md
+
 # IDE
 .vscode/
 .idea/

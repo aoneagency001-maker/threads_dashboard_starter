@@ -1,17 +1,17 @@
 import streamlit as st
-import json
-from pathlib import Path
-from backend.parser import process_book, QUOTES_DIR, BOOKS_DIR
-from backend.agent import refine_quotes, harvest_all_from_pdf, improve_existing_quotes
 import requests
 import os
+from pathlib import Path
 from dotenv import load_dotenv
+from backend.database import get_db
+from backend.parser_v2 import process_book, BOOKS_DIR
 
 load_dotenv()
 ACCESS_TOKEN = os.getenv("THREADS_ACCESS_TOKEN")
 IG_USER_ID = os.getenv("IG_USER_ID")
 
-def publish_to_threads(caption: str) -> bool:
+
+def publish_to_threads(caption: str, quote_id: int = None) -> bool:
     """Публикует текстовый пост в Threads через Instagram Graph API."""
     if not ACCESS_TOKEN or not IG_USER_ID:
         st.error("❌ Токен Threads не найден. Добавь его в .env файл.")
@@ -35,158 +35,265 @@ def publish_to_threads(caption: str) -> bool:
 
     if "id" in publish:
         st.success("✅ Пост успешно опубликован в Threads!")
+        # Отмечаем цитату как опубликованную в БД
+        if quote_id:
+            db = get_db()
+            db.mark_as_published(quote_id)
         return True
     else:
         st.error(f"Ошибка публикации: {publish}")
         return False
 
-st.set_page_config(page_title="Quotes Extractor", page_icon="📚", layout="wide")
+
+# ============================================
+# КОНФИГУРАЦИЯ СТРАНИЦЫ
+# ============================================
+
+st.set_page_config(page_title="База цитат", page_icon="📚", layout="wide")
 st.title("📚 База цитат из книг")
 
+# ============================================
+# БОКОВАЯ ПАНЕЛЬ
+# ============================================
+
+db = get_db()
+
 with st.sidebar:
-    st.header("Источник книги")
-    pdf_files = sorted([p for p in BOOKS_DIR.glob("*.pdf")])
-    pdf_names = [p.name for p in pdf_files]
-    selected_name = st.selectbox("Выберите PDF", options=pdf_names)
-    query = st.text_input("Поиск по цитатам/переводу/смыслу", "")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        insights_btn = st.button("🔥 Собрать лучшие цитаты (GPT-инсайты)", type="primary")
-    with col2:
-        improve_btn = st.button("🧠 Улучшить существующие цитаты", type="secondary")
+    st.header("⚙️ Настройки")
 
-content_col, preview_col = st.columns([2, 1])
+    # Вкладки: Обзор, Обработка, Фильтры
+    tab1, tab2, tab3 = st.tabs(["📊 Обзор", "📖 Обработка", "🔍 Фильтры"])
 
-if selected_name:
-    selected_pdf = BOOKS_DIR / selected_name
-    quotes_json_path = QUOTES_DIR / (Path(selected_name).stem.replace(" ", "-") + ".json")
+    with tab1:
+        # Статистика по всей базе
+        stats = db.get_statistics()
+        st.metric("📚 Книг в базе", stats.get("total_books", 0))
+        st.metric("💬 Всего цитат", stats.get("total_quotes", 0))
+        st.metric("📝 Опубликовано", stats.get("published_quotes", 0))
 
-    if insights_btn:
-        with st.spinner("🤖 Анализирую книгу и создаю осмысленные цитаты..."):
-            out = harvest_all_from_pdf(str(selected_pdf))
-        st.success(f"✅ Готово! Создано структурированных цитат: {out}")
-        st.rerun()
-    
-    if improve_btn:
-        if quotes_json_path.exists():
-            with st.spinner("🧠 Улучшаю существующие цитаты с помощью умного анализа..."):
-                out = improve_existing_quotes(str(quotes_json_path))
-            st.success(f"✅ Готово! Улучшены цитаты: {out}")
-            st.rerun()
+        avg_quality = stats.get("avg_quality", 0.0)
+        st.metric("⭐ Средняя оценка", f"{avg_quality:.2f}")
+
+        st.divider()
+
+        # Топ категории
+        top_categories = stats.get("top_categories", [])
+        if top_categories:
+            st.write("**🏷️ Популярные категории:**")
+            for cat, count in top_categories[:5]:
+                st.write(f"• {cat}: {count}")
+
+    with tab2:
+        st.subheader("Обработать книгу")
+
+        # Список PDF файлов
+        pdf_files = sorted([p for p in BOOKS_DIR.glob("*.pdf")])
+        pdf_names = ["(выберите PDF)"] + [p.name for p in pdf_files]
+        selected_name = st.selectbox("Выберите PDF", options=pdf_names)
+
+        if selected_name != "(выберите PDF)":
+            selected_pdf = BOOKS_DIR / selected_name
+
+            col1, col2 = st.columns(2)
+            with col1:
+                min_quotes = st.number_input("Мин. цитат", min_value=10, max_value=100, value=20)
+            with col2:
+                max_quotes = st.number_input("Макс. цитат", min_value=10, max_value=100, value=50)
+
+            if st.button("🔥 Обработать книгу", type="primary", use_container_width=True):
+                with st.spinner("🤖 Извлекаю и валидирую цитаты..."):
+                    try:
+                        output_path = process_book(str(selected_pdf), force=True)
+                        if output_path:
+                            st.success(f"✅ Книга обработана! Сохранено в: {output_path}")
+                            st.info("💡 Перезапустите страницу для загрузки новых цитат в БД")
+                        else:
+                            st.error("❌ Ошибка обработки книги")
+                    except Exception as e:
+                        st.error(f"❌ Ошибка: {e}")
+
+    with tab3:
+        st.subheader("Фильтры")
+
+        # Выбор книги
+        books = db.get_all_books()
+        book_options = ["(все книги)"] + [f"{b['title']}" for b in books]
+        selected_book = st.selectbox("📚 Книга", options=book_options)
+
+        if selected_book == "(все книги)":
+            book_id = None
         else:
-            st.warning("Сначала соберите цитаты с помощью кнопки 'Собрать лучшие цитаты'")
+            # Находим ID книги
+            book_id = next((b["id"] for b in books if b["title"] == selected_book), None)
 
-    if quotes_json_path.exists():
-        with open(quotes_json_path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-            data = payload.get("quotes", []) if isinstance(payload, dict) else payload
+        # Минимальное качество
+        min_quality = st.slider("⭐ Мин. качество", 0.0, 1.0, 0.0, 0.1)
+
+        # Категория
+        categories = ["(все)"] + db.get_all_categories()
+        selected_category = st.selectbox("🏷️ Категория", options=categories)
+        category = None if selected_category == "(все)" else selected_category
+
+        # Статус публикации
+        publication_filter = st.radio(
+            "📤 Статус",
+            options=["Все", "Только неопубликованные", "Только опубликованные"]
+        )
+
+        only_unpublished = publication_filter == "Только неопубликованные"
+        only_published = publication_filter == "Только опубликованные"
+
+        # Поиск
+        st.divider()
+        search_query = st.text_input("🔎 Поиск по тексту", "")
+
+# ============================================
+# ОСНОВНОЙ КОНТЕНТ
+# ============================================
+
+# Получаем цитаты с учётом фильтров
+if search_query:
+    quotes = db.search_quotes(search_query)
+else:
+    quotes = db.get_quotes(
+        book_id=book_id,
+        category=category,
+        min_quality=min_quality,
+        only_unpublished=only_unpublished if not only_published else False
+    )
+
+    # Дополнительная фильтрация для опубликованных
+    if only_published:
+        quotes = [q for q in quotes if q.get("published_at")]
+
+# Колонки для основного контента
+content_col, actions_col = st.columns([3, 1])
+
+with content_col:
+    st.subheader(f"📝 Цитаты ({len(quotes)})")
+
+    if not quotes:
+        st.info("📚 Нет цитат по выбранным фильтрам. Попробуйте изменить параметры поиска.")
     else:
-        data = []
+        # Пагинация
+        per_page = 10
+        total = len(quotes)
+        total_pages = (total + per_page - 1) // per_page if total else 1
+        page = st.number_input("Страница", min_value=1, max_value=max(total_pages, 1), value=1, step=1, key="page_num")
+        start = (page - 1) * per_page
+        end = start + per_page
 
-    # Поиск/фильтр
-    if query:
-        q = query.lower()
-        def match(item: dict) -> bool:
-            return any(
-                q in (item.get(k, "") or "").lower()
-                for k in ("quote", "translated", "summary", "original")
-            )
-        filtered = [it for it in data if match(it)]
-    else:
-        filtered = data
+        # Отображение цитат
+        for idx, quote_item in enumerate(quotes[start:end], start=start + 1):
+            quote_text = quote_item.get("quote", "")
+            translated = quote_item.get("translated", "")
+            quality = quote_item.get("quality", 0.0)
+            category_name = quote_item.get("category", "general")
+            published = quote_item.get("published_at")
 
-    with content_col:
-        st.subheader("Цитаты")
-        if not filtered:
-            st.info("📚 Нет данных. Нажмите 'Собрать лучшие цитаты' для анализа книги.")
-        else:
-            # Показываем статистику
-            engaging_count = len([item for item in filtered if item.get("engaging") is True])
-            improved_count = len([item for item in filtered if item.get("meta", {}).get("improved") is True])
-            st.metric("📊 Всего цитат", len(filtered), f"Осмысленных: {engaging_count}, Улучшенных: {improved_count}")
-            
-            # Пагинация по 5 цитат
-            per_page = 5
-            total = len(filtered)
-            total_pages = (total + per_page - 1) // per_page if total else 1
-            page = st.number_input("Страница", min_value=1, max_value=max(total_pages, 1), value=1, step=1)
-            start = (page - 1) * per_page
-            end = start + per_page
-            
-            for i, item in enumerate(filtered[start:end], start=start + 1):
-                # Показываем все цитаты, но выделяем engaging
-                display_text = item.get('quote', '') or item.get('translated', '') or item.get('original', '')
-                if not display_text:
-                    continue
-                    
-                # Выделяем engaging цитаты и улучшенные
-                meta = item.get("meta", {})
-                is_improved = meta.get("improved", False)
-                is_engaging = item.get("engaging") is True
-                
-                if is_engaging and is_improved:
-                    st.markdown(f"**{i}.** 🔥🧠 {display_text}")
-                elif is_engaging:
-                    st.markdown(f"**{i}.** 🔥 {display_text}")
-                elif is_improved:
-                    st.markdown(f"**{i}.** 🧠 {display_text}")
-                else:
-                    st.markdown(f"**{i}.** ✍️ {display_text}")
-                
-                # Метаданные
-                meta_line = []
-                if item.get("category"):
-                    meta_line.append(f"📂 {item.get('category')}")
-                if item.get("style"):
-                    meta_line.append(f"🎯 {item.get('style')}")
-                if meta.get("quote_type"):
-                    meta_line.append(f"📝 {meta.get('quote_type')}")
-                if meta.get("confidence"):
-                    meta_line.append(f"🎯 {meta.get('confidence'):.2f}")
-                if meta_line:
-                    st.caption(" • ".join(meta_line))
-                
-                # Сводка
-                summary = item.get("summary")
+            # Отображаемый текст (русский или оригинал)
+            display_text = translated if translated else quote_text
+
+            # Иконки статуса
+            status_icons = []
+            if quality >= 0.8:
+                status_icons.append("🔥")
+            if published:
+                status_icons.append("✅")
+
+            status_prefix = " ".join(status_icons) + " " if status_icons else ""
+
+            # Заголовок цитаты
+            st.markdown(f"**{idx}.** {status_prefix}{display_text}")
+
+            # Метаданные
+            meta_parts = []
+            meta_parts.append(f"📂 {category_name}")
+            meta_parts.append(f"⭐ {quality:.2f}")
+
+            book_title = quote_item.get("book_title", "")
+            if book_title:
+                meta_parts.append(f"📚 {book_title}")
+
+            page_num = quote_item.get("page")
+            if page_num:
+                meta_parts.append(f"📄 стр. {page_num}")
+
+            if published:
+                meta_parts.append(f"📤 Опубликовано")
+
+            st.caption(" • ".join(meta_parts))
+
+            # Развёрнутая информация
+            with st.expander("🔍 Подробнее"):
+                if quote_text != translated:
+                    st.write(f"**Оригинал:** {quote_text}")
+
+                summary = quote_item.get("summary", "")
                 if summary:
-                    st.write(f"🧠 {summary}")
-                
-                # Дополнительная информация о качестве
-                if meta.get("reasoning"):
-                    with st.expander("🔍 Анализ качества"):
-                        st.write(f"**Объяснение:** {meta.get('reasoning')}")
-                        if meta.get("context_score"):
-                            st.write(f"**Контекст:** {meta.get('context_score'):.2f}")
-                        if meta.get("practical_value"):
-                            st.write(f"**Практическая ценность:** {meta.get('practical_value'):.2f}")
-                        if meta.get("completeness"):
-                            st.write(f"**Завершенность:** {meta.get('completeness'):.2f}")
-                
-                # Страница
-                page_num = item.get("page")
-                if page_num:
-                    st.caption(f"📄 стр. {page_num}")
-                
-                st.divider()
+                    st.write(f"**Суть:** {summary}")
 
-        if st.button("🚀 Опубликовать в Threads"):
-            with st.spinner("Публикуем пост..."):
-                selected = None
-                # Ищем engaging цитату
-                for it in filtered:
-                    if it.get("engaging") is True and it.get("quote"):
-                        selected = it.get("quote")
-                        break
-                # Если нет engaging, берём первую доступную
-                if not selected and filtered:
-                    selected = (filtered[0].get("quote") or filtered[0].get("translated") or "").strip()
-                if selected:
-                    publish_to_threads(selected)
-                else:
-                    st.warning("Нет цитат для публикации. Сначала собери цитаты.")
+                # Показываем метаданные из meta JSON поля
+                meta_json = quote_item.get("meta", {})
+                if meta_json:
+                    st.write("**Метаданные:**")
+                    for key, value in meta_json.items():
+                        if isinstance(value, float):
+                            st.write(f"• {key}: {value:.2f}")
+                        else:
+                            st.write(f"• {key}: {value}")
 
-    with preview_col:
-        st.subheader("Файл")
-        st.caption(selected_pdf.name)
-        st.write(f"Цитат: {len(data)}")
+                # Кнопка публикации для этой конкретной цитаты
+                if not published:
+                    if st.button(f"📤 Опубликовать в Threads", key=f"publish_{quote_item['id']}"):
+                        publish_to_threads(display_text, quote_item["id"])
+                        st.rerun()
+
+            st.divider()
+
+with actions_col:
+    st.subheader("⚡ Действия")
+
+    if quotes:
+        st.write(f"**Найдено:** {len(quotes)}")
+
+        # Быстрая публикация лучшей цитаты
+        if st.button("🚀 Опубликовать лучшую", type="primary", use_container_width=True):
+            # Ищем лучшую неопубликованную цитату
+            unpublished = [q for q in quotes if not q.get("published_at")]
+
+            if unpublished:
+                # Сортируем по качеству
+                best = max(unpublished, key=lambda x: x.get("quality", 0.0))
+                text = best.get("translated") or best.get("quote")
+
+                if text:
+                    with st.spinner("Публикуем..."):
+                        publish_to_threads(text, best["id"])
+                        st.rerun()
+            else:
+                st.warning("⚠️ Все цитаты уже опубликованы")
+
+        # Экспорт
+        st.divider()
+        st.write("**📥 Экспорт:**")
+
+        if st.button("💾 Скачать JSON", use_container_width=True):
+            import json
+            json_data = json.dumps(quotes, ensure_ascii=False, indent=2)
+            st.download_button(
+                label="⬇️ Скачать",
+                data=json_data,
+                file_name="quotes_export.json",
+                mime="application/json",
+                use_container_width=True
+            )
+    else:
+        st.info("Выберите фильтры слева")
+
+# ============================================
+# ПОДВАЛ
+# ============================================
+
+st.divider()
+st.caption("📚 База цитат из книг • Powered by Claude 3 Haiku • v2.0")
