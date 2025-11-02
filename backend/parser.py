@@ -173,6 +173,23 @@ def clean_text(text):
 def translate_text(text, target_lang="ru"):
     if not text:
         return text
+    
+    # Используем Claude для перевода (если доступен)
+    try:
+        # Используем абсолютный импорт для избежания проблем
+        import sys
+        from pathlib import Path
+        backend_path = Path(__file__).parent
+        if str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+        from claude_client import is_claude_available, claude_translate
+        if is_claude_available():
+            return claude_translate(text, target_lang)
+    except (ImportError, Exception) as e:
+        # Тихий fallback - просто пропускаем Claude
+        pass
+    
+    # Fallback на GPT
     if client is None:
         return text
     try:

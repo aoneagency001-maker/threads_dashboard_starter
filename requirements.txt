@@ -11,7 +11,13 @@ typing_extensions
 # Google Gemini для глубокого сканирования
 google-generativeai
 
+# Anthropic Claude для написания и редактирования текстов
+anthropic>=0.34.0
+
 # Threads API dependencies
 aiohttp
 cryptography
 colorama
+
+# Research Module - Database
+sqlalchemy>=2.0.0

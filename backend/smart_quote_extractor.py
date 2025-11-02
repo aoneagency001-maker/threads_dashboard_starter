@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 from openai import OpenAI
+from .claude_client import is_claude_available, claude_analyze_quality
 
 try:
     from dotenv import load_dotenv
@@ -175,6 +176,28 @@ class SmartQuoteExtractor:
     
     def _analyze_quote_quality(self, quote: str, full_context: str, page_num: Optional[int]) -> QuoteAnalysis:
         """Анализирует качество цитаты"""
+        # Используем Claude для анализа (если доступен)
+        if is_claude_available():
+            try:
+                data = claude_analyze_quality(quote, full_context)
+                if data:
+                    return QuoteAnalysis(
+                        text=quote,
+                        quote_type=QuoteType(data.get("quote_type", "specific_quote")),
+                        quality=QuoteQuality(data.get("quality", "average")),
+                        confidence=float(data.get("confidence", 0.5)),
+                        context_score=float(data.get("context_score", 0.5)),
+                        practical_value=float(data.get("practical_value", 0.5)),
+                        completeness=float(data.get("completeness", 0.5)),
+                        target_audience=data.get("target_audience", "general"),
+                        category=data.get("category", "general"),
+                        sentiment=data.get("sentiment", "neutral"),
+                        reasoning=data.get("reasoning", "")
+                    )
+            except Exception as e:
+                print(f"⚠️ Ошибка Claude при анализе качества, используем fallback: {e}")
+        
+        # Fallback на GPT (если Claude недоступен)
         if self.client is None:
             return self._fallback_analysis(quote, full_context, page_num)
         

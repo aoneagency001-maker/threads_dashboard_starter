@@ -10,6 +10,12 @@ from . import parser as book_parser
 from .smart_quote_extractor import SmartQuoteExtractor, QuoteQuality
 from .quote_validator import QuoteValidator
 from .gemini_extractor import GeminiDeepExtractor
+from .claude_client import (
+    is_claude_available,
+    claude_refine_quotes,
+    claude_extract_from_chunk,
+    claude_analyze_quality
+)
 
 try:
     from dotenv import load_dotenv
@@ -75,9 +81,27 @@ def _refine_batch(quotes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "meta": meta,
         }
 
+    # Используем Claude для полировки (если доступен), иначе fallback на GPT или локальную валидацию
+    if is_claude_available():
+        try:
+            # Используем Claude для полировки
+            refined_quotes = claude_refine_quotes(quotes)
+            # Применяем локальную валидацию к результатам
+            result = []
+            for quote in refined_quotes:
+                validated = _local_polish(quote)
+                if validated and validated.get("quote"):
+                    result.append(validated)
+            return result if result else [it for it in [_local_polish(it) for it in quotes if (it.get("quote") or it.get("original"))] if it is not None]
+        except Exception as e:
+            print(f"⚠️ Ошибка Claude при обработке батча, используем fallback: {e}")
+            # Fallback на локальную валидацию
+            return [it for it in [_local_polish(it) for it in quotes if (it.get("quote") or it.get("original"))] if it is not None]
+    
     if client is None:
         return [it for it in [_local_polish(it) for it in quotes if (it.get("quote") or it.get("original"))] if it is not None]
 
+    # Fallback на GPT (если Claude недоступен, но GPT доступен)
     # Готовим батч как JSON для строгого ответа
     system_prompt = (
         "Ты — редактор цитат для Threads (Instagram). Проверь и отполируй цитаты.\n\n"
@@ -215,9 +239,44 @@ def _extract_engaging_from_chunk(chunk: str) -> List[Dict[str, Any]]:
                 break
         return results
 
+    # Используем Claude для извлечения (если доступен)
+    if is_claude_available():
+        try:
+            quotes = claude_extract_from_chunk(chunk)
+            if quotes:
+                # Используем валидатор для проверки каждой цитаты
+                validator = QuoteValidator(use_ai=False)
+                cleaned: List[Dict[str, Any]] = []
+                
+                for obj in quotes:
+                    q = (obj.get("quote") or "").strip()
+                    if not q:
+                        continue
+                    
+                    quote_data = {
+                        "original": obj.get("original") or chunk,
+                        "summary": obj.get("summary", ""),
+                        "quote": q,
+                        "translated": obj.get("translated") or q,
+                        "engaging": True,
+                        "category": obj.get("category", ""),
+                        "style": obj.get("style", "insight"),
+                        "meta": obj.get("meta") or {},
+                    }
+                    
+                    validated = validator.get_validated_quote(quote_data)
+                    if validated:
+                        cleaned.append(validated)
+                
+                return cleaned[:2]
+        except Exception as e:
+            print(f"⚠️ Ошибка Claude при извлечении, используем fallback: {e}")
+            # Fallback на эвристику или GPT
+    
     if client is None:
         return heuristic_candidates(chunk)
 
+    # Fallback на GPT (если Claude недоступен)
     system_prompt = (
         "Ты — интеллектуальный редактор цитат для Threads.\n\n"
         "🎯 ЗАДАЧА: Извлеки 1-2 ключевые идеи из текста для предпринимателей и маркетологов.\n\n"
