@@ -7,3 +7,11 @@ openai
 python-dotenv
 tqdm
 typing_extensions
+
+# Google Gemini для глубокого сканирования
+google-generativeai
+
+# Threads API dependencies
+aiohttp
+cryptography
+colorama

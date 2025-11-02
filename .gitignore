@@ -37,3 +37,8 @@ data/posts.json
 # Logs
 *.log
 
+# Threads API cache files
+.token
+.session.json
+*.token
+
